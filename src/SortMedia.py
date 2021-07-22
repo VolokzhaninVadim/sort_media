@@ -31,6 +31,14 @@ from facenet_pytorch import MTCNN, extract_face, InceptionResnetV1
 # Для сериализации и десериализации объектов Python
 import pickle
 
+# Для мониторинга выполнения циклов
+from tqdm.notebook import tqdm as tqdm_notebook
+
+# Для работы с картинками
+from PIL import Image, ImageDraw
+# Для компьютерного зрения 
+import cv2 as cv, mmcv
+
 ###############################################################################################################################################
 ############################################## Создаем объект класса ##########################################################################
 ###############################################################################################################################################
@@ -42,11 +50,12 @@ class SortMedia():
         ,pg_login
         ,pg_host
         ,device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-        ,type_file_tuple = ('.jpg', '.png', '.mp4')
-        ,path_list = ['/camera_vvy', '/camera_angel']
+        ,type_file_tuple = ('.jpg', '.jpeg', '.png', '.mp4')
+        ,path_input_list = ['/camera_vvy', '/camera_angel']
+        ,path_training_list = ['/ml_models/sort_media/veronica/']
         ,schema = 'sort_media'
         ,table_name = 'path'
-        ,MTCNN = MTCNN
+        ,MTCNN = MTCNN        
     ):
         """
         Сортировка медиафайлов с найденным лицом искомого человека по папкам. 
@@ -65,7 +74,8 @@ class SortMedia():
             
         """
         self.type_file_tuple = type_file_tuple
-        self.path_list = path_list
+        self.path_input_list = path_input_list
+        self.path_training_list = path_training_list
         self.engine = create_engine(f'postgres://{pg_login}:{pg_password}@{pg_host}:5432/{pg_login}')
         self.schema = schema
         self.table_name = table_name
@@ -125,7 +135,7 @@ class SortMedia():
         )
         return desription_df
 
-    def input_files(self):
+    def input_files(self, path_list = None):
         """
         Получение путей к медиафайлам для обработки. 
         Вход: 
@@ -133,10 +143,11 @@ class SortMedia():
         Выход: 
             result(list) - список путей к файлам. 
         """
+        path_list = path_list if path_list else self.path_input_list 
         files_list = []
-        for path in self.path_list: 
+        for path in path_list: 
             for dirpath, subdirs, files in os.walk(path):
-                files_list.extend(os.path.join(dirpath, x) for x in files if x.endswith(self.type_file_tuple))
+                files_list.extend(os.path.join(dirpath, x) for x in files if x.lower().endswith(self.type_file_tuple))
         result = files_list if files_list else None        
         return result
     
@@ -293,6 +304,40 @@ class SortMedia():
             ,keep_all = True
         )
         return mtcnn
+    
+    def avg_embedding_human(self):
+        """
+        Возвращаем эбединг для искомого человека. 
+        Вход:
+            нет.
+        Выход: 
+            (torch.Tensor) - усредненный тензор лица искомого человека. 
+        """
+# Загружаем модель для получения эмбединга 
+        resnet = self.load_model_embedding()
+# Получаем пути к тренировочному набору 
+        training_path_list = self.input_files(path_list = self.path_training_list)
+    
+# Получаем вектора лиц всех
+        all_aligned = []
+        for path in tqdm_notebook(training_path_list): 
+            img = Image.open(path)
+# Переводим в RGB
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            aligned = self.mtcnn(img)
+            boxes, probs = self.mtcnn.detect(img)
+            if boxes is not None:
+                for x_aligned, prob, box in zip(aligned, probs, boxes):
+                    if prob > 0.99:
+        #                 print(f'Вероятность определения лица: {prob}')
+                        all_aligned.append(x_aligned)
+        #                 display(img.crop(box.tolist()))
+
+# Получаем эмбединг лиц всех
+        all_aligned = torch.stack(all_aligned).to(self.device)
+        embeddings_all = resnet(all_aligned).detach().cpu()
+        return embeddings_all.mean(axis = 0)
     
     
     
