@@ -9,7 +9,7 @@ CREATE TABLE sort_media."path" (
 	file_name varchar NULL,
 	"type" varchar NULL,
 	is_processed bool NULL,
-	date_load information_schema.time_stamp NULL,
+	date_load information_schema.timestamp NULL,
 	CONSTRAINT path_pk PRIMARY KEY (path)
 );
 COMMENT ON TABLE sort_media."path" IS 'Пути к медиафайлам';
