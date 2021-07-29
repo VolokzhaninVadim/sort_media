@@ -4,12 +4,12 @@
 # DDL 
 ```
 CREATE TABLE sort_media."path" (
-	"path" varchar NULL,
+	"path" varchar NOT NULL,
 	file varchar NULL,
 	file_name varchar NULL,
 	"type" varchar NULL,
 	is_processed bool NULL,
-	date_load information_schema.timestamp NULL,
+	date_load timestamp NULL,
 	CONSTRAINT path_pk PRIMARY KEY (path)
 );
 COMMENT ON TABLE sort_media."path" IS 'Пути к медиафайлам';
