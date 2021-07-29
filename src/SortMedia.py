@@ -50,7 +50,7 @@ class SortMedia():
         ,pg_login
         ,pg_host
         ,device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-        ,type_file_tuple = ('.jpg', '.jpeg', '.png', '.mp4')
+        ,type_file_dict = {'image' : ['.jpg', '.jpeg', '.png'], 'video' : ['.mp4']}
         ,path_input_list = ['/camera_vvy', '/camera_angel']
         ,path_training_list = ['/ml_models/sort_media/veronica/']
         ,schema = 'sort_media'
@@ -64,16 +64,15 @@ class SortMedia():
             pg_login(str) - логин к DWH. 
             pg_host(str) - хост DWH.
             device(torch.device) - устройство для работы модели.
-            type_file_tuple(tuple) - кортеж с типами медиафайлов.
-            path_list(list) -  список путей к файлам.
+            type_file_dict(dict) - словарь с типами медиафайлов.
+            path_input_list(list) - список путей к файлам для поиска человека.
+            path_training_list(list) - список путей к файлам искомого человека.
             schema(str) - наименование схемы DWH.
             table_name - наименование таблицы DWH. 
-            type_file(list) - список типов файлов.
-            path_list(list) - список путей к файлам. 
             MTCNN(Model.Model) - модель для распознавания лиц.
             
         """
-        self.type_file_tuple = type_file_tuple
+        self.type_file_dict = type_file_dict
         self.path_input_list = path_input_list
         self.path_training_list = path_training_list
         self.engine = create_engine(f'postgres://{pg_login}:{pg_password}@{pg_host}:5432/{pg_login}')
@@ -145,9 +144,10 @@ class SortMedia():
         """
         path_list = path_list if path_list else self.path_input_list 
         files_list = []
+        type_file_tuple = tuple(i for j in self.type_file_dict.values() for i in j)
         for path in path_list: 
             for dirpath, subdirs, files in os.walk(path):
-                files_list.extend(os.path.join(dirpath, x) for x in files if x.lower().endswith(self.type_file_tuple))
+                files_list.extend(os.path.join(dirpath, x) for x in files if x.lower().endswith(type_file_tuple))
         result = files_list if files_list else None        
         return result
     
@@ -162,7 +162,8 @@ class SortMedia():
         metadata_file = [] 
         
         # Получаем тип файла
-        type_file_list = [type_file + '$' for type_file in self.type_file_tuple]        
+        type_file_tuple = tuple(i for j in self.type_file_dict.values() for i in j)
+        type_file_list = [type_file + '$' for type_file in type_file_tuple]        
 
         # Получаем дату загрузки 
         date_load = datetime.datetime.now(pytz.timezone('Asia/Vladivostok')).strftime("%Y-%m-%d %H:%M:%S")
@@ -213,21 +214,18 @@ class SortMedia():
         )
         primary_keys = [key.name for key in inspect(table).primary_key]
         
-        # Производим запись данных
+# Производим запись данных
         stmt = pg_insert(table).values(records)
 
         update_dict = {
             c.name: c
             for c in stmt.excluded
-            if not c.primary_key
+            if not c.primary_key and c.name != 'date_load'
         }
-
-        if update_dict == {}:
-            insert_ignore(self.table_name, records)
-
+# Обновляем поля, если строка существует 
         update_stmt = stmt.on_conflict_do_update(
             index_elements = primary_keys,
-            set_ = update_dict,
+            set_ = update_dict
         )
 
         with self.engine.connect() as conn:
