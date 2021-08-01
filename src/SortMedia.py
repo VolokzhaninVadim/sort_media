@@ -25,6 +25,9 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision import datasets
 
+# Для работы с расстояниями
+from scipy.spatial.distance import cosine
+
 # Для работы с распознаванием лиц
 from facenet_pytorch import MTCNN, extract_face, InceptionResnetV1
 
@@ -35,7 +38,8 @@ import pickle
 from tqdm.notebook import tqdm as tqdm_notebook
 
 # Для работы с картинками
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 # Для компьютерного зрения 
 import cv2 as cv, mmcv
 
@@ -53,9 +57,14 @@ class SortMedia():
         ,type_file_dict = {'image' : ['.jpg', '.jpeg', '.png'], 'video' : ['.mp4']}
         ,path_input_list = ['/camera_vvy', '/camera_angel']
         ,path_training_list = ['/ml_models/sort_media/veronica/']
+        ,path_output_list = '/veronica'
         ,schema = 'sort_media'
         ,table_name = 'path'
-        ,MTCNN = MTCNN        
+        ,MTCNN = MTCNN   
+        ,path = {
+            'avg_embedding_human' : '/ml_models/sort_media/avg_embedding_human.bin'
+            ,'model' : '/ml_models/sort_media/binary_model.bin'
+        }
     ):
         """
         Сортировка медиафайлов с найденным лицом искомого человека по папкам. 
@@ -66,6 +75,7 @@ class SortMedia():
             device(torch.device) - устройство для работы модели.
             type_file_dict(dict) - словарь с типами медиафайлов.
             path_input_list(list) - список путей к файлам для поиска человека.
+            path_output_list(str) - путь к директории для перемещения файлов.
             path_training_list(list) - список путей к файлам искомого человека.
             schema(str) - наименование схемы DWH.
             table_name - наименование таблицы DWH. 
@@ -79,16 +89,7 @@ class SortMedia():
         self.schema = schema
         self.table_name = table_name
         self.device = device
-        self.mtcnn = MTCNN(
-                    image_size = 160
-                    ,margin = 0
-                    ,min_face_size = 20
-                    ,thresholds = [0.6, 0.7, 0.7]
-                    ,factor = 0.709
-                    ,post_process = True
-                    ,device = device
-                    ,keep_all = True
-                )
+        self.path = path
         
     def pg_descriptions(self): 
         """
@@ -231,7 +232,7 @@ class SortMedia():
         with self.engine.connect() as conn:
             result = conn.execute(update_stmt)
             
-    def path(self): 
+    def path_df(self): 
         """
         Новые файлы на обработку.
         Вход: 
@@ -243,7 +244,10 @@ class SortMedia():
         query = """
         select
                 "path" 
+                ,file
+                ,file_name
                 ,type
+                ,date_load
         from 
                 sort_media."path"	
         where 
@@ -257,7 +261,7 @@ class SortMedia():
         )
         return result_df
     
-    def write_model(self, path = '/ml_models/sort_media/binary_model.bin'):             
+    def write_model_embedding(self):             
         """
         Сохранение модели для распознавания лиц в бинарный файл. 
         Вход:
@@ -267,18 +271,18 @@ class SortMedia():
         """        
 
         resnet = InceptionResnetV1(pretrained = 'vggface2')
-        with open(path, "wb") as f:
+        with open(self.path['model'], "wb") as f:
             pickle.dump(resnet, f)            
             
-    def load_model_embedding(self, path = '/ml_models/sort_media/binary_model.bin'): 
+    def load_model_embedding(self): 
         """
         Загрузка модели из бинарного файла для описания ключевых точек.
         Вход: 
             path(str) - путь файлу модели.
         Выход: 
-            model(Model.Model) - модель в режиме оценки, и перенесенная на видеокарту. 
+            model(Model.Model) - модель в режиме оценки, и перенесенная на видеокарту для вывода эмбединга лица. 
         """
-        with open(f"{path}", "rb") as f:
+        with open(f"{self.path['model']}", "rb") as f:
             model = pickle.load(f)
         return model.eval().to(self.device)
     
@@ -337,7 +341,97 @@ class SortMedia():
         embeddings_all = resnet(all_aligned).detach().cpu()
         return embeddings_all.mean(axis = 0)
     
+    def write_avg_embedding_human(self):             
+        """
+        Сохранение усредненного эмбединга лица искомого человека. 
+        Вход:
+            path(str) - путь для сохранения файла.
+        Выход: 
+            нет. 
+        """        
+        avg_embedding_human = self.avg_embedding_human()
+        with open(self.path['avg_embedding_human'], "wb") as f:
+            pickle.dump(avg_embedding_human, f)      
     
-    
-
+    def load_avg_embedding_human(self): 
+        """
+        Загрузка усредненного вектора лица искомого человека.
+        Вход: 
+            path(str) - путь файлу модели.
+        Выход: 
+            avg_embedding_human(torch.Tensor) - усредненный вектор лица искомого человека. 
+        """
+        with open(f"{self.path['avg_embedding_human']}", "rb") as f:
+            avg_embedding_human = pickle.load(f)
+        return avg_embedding_human
         
+    def open_image(self, path, coefficient = 3): 
+        """
+        Определение лица искомого человека.
+        Вход: 
+            path(str) - путь к файлу
+            coefficient(int) - коэффициент уменьшение фото. 
+        Выход: 
+            img_resize(bool) - булевого значение наличия лица искомого человека.
+        """
+
+    # Открываем фото и изменяем размер       
+        img = Image.open(path)
+        size = [int(i / coefficient) for i in img.size]
+        img_resize = img.resize(tuple(size))
+    # Переводим в RGB
+        if img_resize.mode != 'RGB':
+            img_resize = img_resize.convert('RGB')
+        print(
+            '\nПуть:', path, 
+            '\nРазмер:', size
+        )
+        return img_resize
+    
+    def is_human_detected(self, path, mtcnn, resnet, avg_embedding_human, coef_decrease = 3, distance = 0.4, probability = 0.8): 
+        """
+        Определение лица искомого человека.
+        Вход: 
+            path(str) - путь к файлу
+            mtcnn(Model.Model) - модель для распознавания лиц 
+            resnet(Model.Model) - модель в режиме оценки, и перенесенная на видеокарту для вывода эмбединга лица. 
+            avg_embedding_human(torch.Tensor) - усредненный вектор лица искомого человека. 
+            coef_decrease(int) - коэффициент уменьшение фото. 
+            distance(float) - максимальное расстояние объектов.
+            probability(float) - вероятность обнаружения лица.
+        Выход: 
+            (bool) - булевого значение наличия лица искомого человека.
+        """
+
+    # Открываем фото и изменяем размер       
+        img = Image.open(path)
+        size = [int(i / coef_decrease) for i in img.size]
+    # Поворачиваем картинку, если длина больше высоты
+        if size[0] > size[1]: 
+            img_resize = img.resize(tuple(size)).rotate(270)
+        else: 
+            img_resize = img.resize(tuple(size))
+    # Переводим в RGB
+        if img_resize.mode != 'RGB':
+            img_resize = img_resize.convert('RGB')
+    # Ищем лицо
+        face_list = []
+        aligned = mtcnn(img_resize)
+        boxes, probs = mtcnn.detect(img_resize)
+        if boxes is not None:
+            for x_aligned, prob, box in zip(aligned, probs, boxes):
+                if prob >= probability:
+                    current_embeding = resnet(x_aligned.unsqueeze(0).to(self.device)).detach().cpu()
+                    dictance = cosine(avg_embedding_human, current_embeding)
+                    if dictance <= distance: 
+                        face_list.append(1)
+                    else: 
+                        face_list.append(0)
+                else: 
+                    face_list.append(0)
+        else: 
+            face_list.append(0)
+        if sum(face_list) > 0: 
+            return True
+        else: 
+            return False
