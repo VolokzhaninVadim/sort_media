@@ -43,6 +43,8 @@ from PIL import Image, ImageDraw, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 # Для компьютерного зрения 
 import cv2 as cv, mmcv
+# Для заполнения exif
+from exif import Image as ImageEXIF
 
 ###############################################################################################################################################
 ############################################## Создаем объект класса ##########################################################################
@@ -441,3 +443,23 @@ class SortMedia():
             return True
         else: 
             return False
+
+    def fill_exif(self, path, image_description = 'Volokzhanina Veronica'):
+        """
+        Заполнение exif фото. 
+        Вход: 
+            path - путь к фото. 
+            image_description - значение tag exif для image_description.
+        Выход: 
+            нет.
+        """
+# Получаем картинку     
+        with open(path, "rb") as palm_1_file:
+            image_exif = ImageEXIF(palm_1_file)
+
+# Записываем тег
+        image_exif.image_description = image_description
+
+# Записываем картинку с exif 
+        with open(path, 'wb') as updated_file:
+            updated_file.write(image_exif.get_file())
