@@ -4,6 +4,7 @@
 
 # Для работы с операционной сисемой 
 import os
+import shutil
 
 # Для работы с SQL
 from sqlalchemy import create_engine, Table, MetaData
@@ -85,11 +86,21 @@ class SortMedia():
         self.type_file_dict = type_file_dict
         self.path_input_list = path_input_list
         self.path_training_list = path_training_list
+        self.path_output_list = path_output_list
         self.engine = create_engine(f'postgres://{pg_login}:{pg_password}@{pg_host}:5432/{pg_login}')
         self.schema = schema
         self.table_name = table_name
         self.device = device
         self.path = path
+        self.metadata = MetaData(schema = self.schema)
+        self.metadata.bind = self.engine
+        self.table = Table(
+            self.table_name
+            ,self.metadata
+            ,schema = self.schema
+            ,autoload = True
+        )
+        self.primary_keys = [key.name for key in inspect(self.table).primary_key]
         
     def pg_descriptions(self): 
         """
@@ -198,25 +209,14 @@ class SortMedia():
             нет.
         """
         
-        # Получаем пути файлов
+# Получаем пути файлов
         input_files_list = self.input_files()
         
-        # Подготавливаем пути файлов для записи
+# Подготавливаем пути файлов для записи
         records = self.metadata_file(input_files_list)
         
-        # Создаем объекты для записи
-        metadata = MetaData(schema = self.schema)
-        metadata.bind = self.engine
-        table = Table(
-            self.table_name
-            ,metadata
-            ,schema = self.schema
-            ,autoload = True
-        )
-        primary_keys = [key.name for key in inspect(table).primary_key]
-        
 # Производим запись данных
-        stmt = pg_insert(table).values(records)
+        stmt = pg_insert(self.table).values(records)
 
         update_dict = {
             c.name: c
@@ -225,7 +225,7 @@ class SortMedia():
         }
 # Обновляем поля, если строка существует 
         update_stmt = stmt.on_conflict_do_update(
-            index_elements = primary_keys,
+            index_elements = self.primary_keys,
             set_ = update_dict
         )
 
@@ -247,12 +247,15 @@ class SortMedia():
                 ,file
                 ,file_name
                 ,type
+                ,is_processed
                 ,date_load
         from 
                 sort_media."path"	
         where 
         -- Отбираем файлы, котолрые не обработаны
                 is_processed  = False
+        order by 
+                date_load desc
         """
         
         result_df = pd.read_sql(
@@ -403,34 +406,37 @@ class SortMedia():
             (bool) - булевого значение наличия лица искомого человека.
         """
 
-    # Открываем фото и изменяем размер       
+# Открываем фото и изменяем размер       
         img = Image.open(path)
         size = [int(i / coef_decrease) for i in img.size]
-    # Поворачиваем картинку, если длина больше высоты
+# Поворачиваем картинку несколько ращз, если длина больше высоты
         if size[0] > size[1]: 
-            img_resize = img.resize(tuple(size)).rotate(270)
+            img_resize_list = [img.resize(tuple(size)).rotate(270), img.resize(tuple(size)).rotate(90)]
         else: 
-            img_resize = img.resize(tuple(size))
-    # Переводим в RGB
-        if img_resize.mode != 'RGB':
-            img_resize = img_resize.convert('RGB')
-    # Ищем лицо
+            img_resize_list = [img.resize(tuple(size))]
+
+# Ищем лицо
         face_list = []
-        aligned = mtcnn(img_resize)
-        boxes, probs = mtcnn.detect(img_resize)
-        if boxes is not None:
-            for x_aligned, prob, box in zip(aligned, probs, boxes):
-                if prob >= probability:
-                    current_embeding = resnet(x_aligned.unsqueeze(0).to(self.device)).detach().cpu()
-                    dictance = cosine(avg_embedding_human, current_embeding)
-                    if dictance <= distance: 
-                        face_list.append(1)
+        for image in img_resize_list: 
+# Переводим в RGB
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+
+            aligned = mtcnn(image)
+            boxes, probs = mtcnn.detect(image)
+            if boxes is not None:
+                for x_aligned, prob, box in zip(aligned, probs, boxes):
+                    if prob >= probability:
+                        current_embeding = resnet(x_aligned.unsqueeze(0).to(self.device)).detach().cpu()
+                        dictance = cosine(avg_embedding_human, current_embeding)
+                        if dictance <= distance: 
+                            face_list.append(1)
+                        else: 
+                            face_list.append(0)
                     else: 
                         face_list.append(0)
-                else: 
-                    face_list.append(0)
-        else: 
-            face_list.append(0)
+            else: 
+                face_list.append(0)
         if sum(face_list) > 0: 
             return True
         else: 
