@@ -223,7 +223,7 @@ class SortMedia():
         update_dict = {
             c.name: c
             for c in stmt.excluded
-            if not c.primary_key and c.name != 'date_load'
+            if not c.primary_key and c.name not in ['date_load', 'is_processed']
         }
 # Обновляем поля, если строка существует 
         update_stmt = stmt.on_conflict_do_update(
@@ -255,7 +255,7 @@ class SortMedia():
                 sort_media."path"	
         where 
         -- Отбираем файлы, котолрые не обработаны
-                is_processed  = False
+                is_processed  != True
         order by 
                 date_load desc
         """
@@ -393,7 +393,7 @@ class SortMedia():
         )
         return img_resize
     
-    def is_human_detected(self, path, mtcnn, resnet, avg_embedding_human, coef_decrease = 3, distance = 0.4, probability = 0.8): 
+    def is_human_detected(self, path, mtcnn, resnet, avg_embedding_human, coef_decrease = 3, distance = 0.4, probability = 0.8, frame = None): 
         """
         Определение лица искомого человека.
         Вход: 
@@ -404,12 +404,16 @@ class SortMedia():
             coef_decrease(int) - коэффициент уменьшение фото. 
             distance(float) - максимальное расстояние объектов.
             probability(float) - вероятность обнаружения лица.
+            frame(PIL.Image.Image) - фото. 
         Выход: 
             (bool) - булевого значение наличия лица искомого человека.
         """
 
-# Открываем фото и изменяем размер       
-        img = Image.open(path)
+# Открываем фото и изменяем размер 
+        if path: 
+            img = Image.open(path)
+        else: 
+            img = frame
         size = [int(i / coef_decrease) for i in img.size]
 # Поворачиваем картинку несколько ращз, если длина больше высоты
         if size[0] > size[1]: 
