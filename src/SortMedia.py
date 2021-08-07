@@ -266,7 +266,7 @@ class SortMedia():
     
     def write_model_embedding(self):             
         """
-        Сохранение модели для распознавания лиц в бинарный файл. 
+        Сохранение модели для описания ключевых точек в бинарный файл. 
         Вход:
             path(str) - путь для сохранения файла.
         Выход: 
@@ -393,7 +393,7 @@ class SortMedia():
     
     def is_human_image_detected(self, path, mtcnn, resnet, avg_embedding_human, coef_decrease = 3, distance = 0.4, probability = 0.8, frame = None): 
         """
-        Определение лица искомого человека.
+        Определение лица искомого человека на фото.
         Вход: 
             path(str) - путь к файлу.
             mtcnn(Model.Model) - модель для распознавания лиц. 
@@ -468,7 +468,7 @@ class SortMedia():
             
     def is_human_video_detected(self, path, mtcnn, resnet, avg_embedding_human, probability = 0.8):     
         """
-        Определение лица искомого человека.
+        Определение лица искомого человека на видео.
         Вход: 
             path(str) - путь к файлу.
             mtcnn(Model.Model) - модель для распознавания лиц. 
