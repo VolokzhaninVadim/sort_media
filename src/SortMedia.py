@@ -23,8 +23,6 @@ import pytz
 
 # Для Deep Learning
 import torch
-from torch.utils.data import DataLoader
-from torchvision import datasets
 
 # Для работы с расстояниями
 from scipy.spatial.distance import cosine
