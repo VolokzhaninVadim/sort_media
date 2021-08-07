@@ -393,12 +393,12 @@ class SortMedia():
         )
         return img_resize
     
-    def is_human_detected(self, path, mtcnn, resnet, avg_embedding_human, coef_decrease = 3, distance = 0.4, probability = 0.8, frame = None): 
+    def is_human_image_detected(self, path, mtcnn, resnet, avg_embedding_human, coef_decrease = 3, distance = 0.4, probability = 0.8, frame = None): 
         """
         Определение лица искомого человека.
         Вход: 
-            path(str) - путь к файлу
-            mtcnn(Model.Model) - модель для распознавания лиц 
+            path(str) - путь к файлу.
+            mtcnn(Model.Model) - модель для распознавания лиц. 
             resnet(Model.Model) - модель в режиме оценки, и перенесенная на видеокарту для вывода эмбединга лица. 
             avg_embedding_human(torch.Tensor) - усредненный вектор лица искомого человека. 
             coef_decrease(int) - коэффициент уменьшение фото. 
@@ -467,3 +467,122 @@ class SortMedia():
 # Записываем картинку с exif 
         with open(path, 'wb') as updated_file:
             updated_file.write(image_exif.get_file())
+            
+    def is_human_video_detected(self, path, mtcnn, resnet, avg_embedding_human, probability = 0.8):     
+        """
+        Определение лица искомого человека.
+        Вход: 
+            path(str) - путь к файлу.
+            mtcnn(Model.Model) - модель для распознавания лиц. 
+            resnet(Model.Model) - модель в режиме оценки, и перенесенная на видеокарту для вывода эмбединга лица. 
+            avg_embedding_human(torch.Tensor) - усредненный вектор лица искомого человека. 
+            coef_decrease(int) - коэффициент уменьшение фото. 
+            probability(float) - вероятность обнаружения лица.
+        Выход: 
+            (bool) - булевого значение наличия лица искомого человека.
+        """
+
+# Получаем отдельные картинки видео
+        video = mmcv.VideoReader(path)
+# Переводим видео в картинки (генератор)
+        frames = (Image.fromarray(cv.cvtColor(frame, cv.COLOR_BGR2RGB)) for frame in video)
+
+# Распознаем лицо
+        for i, frame in enumerate(frames):
+            print('\rTracking frame: {}'.format(i + 1), end = '')    
+# Распознаем лицо
+            aligned = mtcnn(frame)
+            boxes, probs = mtcnn.detect(frame)
+            if boxes is not None: 
+                for x_aligned, prob, box in zip(aligned, probs, boxes):
+                    if prob >= probability and self.is_human_image_detected(
+                        path = None
+                        ,mtcnn = mtcnn
+                        ,resnet = resnet
+                        ,avg_embedding_human = avg_embedding_human
+                        ,frame = frame
+                    ): 
+                        return True
+        return False
+    
+    def media_sort(self):
+        """
+        Сортировка медиафайлов с найденным лицом искомого человека по папкам. 
+        Вход: 
+            нет.
+        Выход: 
+            нет.
+        """
+
+# Получаем не обработанные файлы 
+        files_df = self.path_df()
+
+# Загружаем модель для распознавания лиц 
+        mtcnn = self.load_model_face_detect()
+
+# Загружаем модель для получения эмбединга 
+        resnet = self.load_model_embedding()
+
+# Загружаем усредненный вектор для лица искомого человека
+        avg_embedding_human = self.load_avg_embedding_human()
+
+        for index, row in files_df.iterrows():
+            if row['type'] in self.type_file_dict['image'] and self.is_human_image_detected(            
+                path = row['path']
+                ,mtcnn = mtcnn
+                ,resnet = resnet
+                ,avg_embedding_human = avg_embedding_human
+            ): 
+# Перемещаем файлы
+                shutil.copyfile(row['path'], self.path_output_list + '/' + row['file'])
+# Обновляем exif 
+                self.fill_exif(path = self.path_output_list + '/' + row['file'])            
+            elif row['type'] in self.type_file_dict['video'] and self.is_human_video_detected(
+                path = row['path']
+                ,mtcnn = mtcnn
+                ,resnet = resnet
+                ,avg_embedding_human = avg_embedding_human
+            ): 
+# Перемещаем файлы
+                shutil.copyfile(row['path'], self.path_output_list + '/' + row['file'])
+# Отмечаем в бд данные 
+            self.write_file_db(
+                path = row['path']
+                ,file = row['file']
+                ,file_name = row['file_name']
+                ,file_type = row['type']
+            )
+    
+    def write_file_db(self, path, file, file_name, file_type): 
+        """
+        Запись в бд информации о проверке файла.
+        Вход: 
+             path(str) - путь к файлу.
+             file(str) - полное имя файла.
+             file_name(str) - наименование файла.
+             file_type(str) - тип файла.             
+        Выход:
+            нет.
+        """
+# Производим запись данных в pg
+        records = {
+                    'path' : path
+                    ,'file' : file
+                    ,'file_name' : file_name
+                    ,'type' : file_type
+                    ,'is_processed' : True
+                }
+        stmt = pg_insert(self.table).values(records)
+        update_dict = {
+            c.name: c
+            for c in stmt.excluded
+            if not c.primary_key and c.name != 'date_load'
+        }
+# Обновляем поля, если строка существует 
+        update_stmt = stmt.on_conflict_do_update(
+            index_elements = self.primary_keys,
+            set_ = update_dict
+        )
+
+        with self.engine.connect() as conn:
+            result = conn.execute(update_stmt)
