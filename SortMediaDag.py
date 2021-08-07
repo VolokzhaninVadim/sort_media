@@ -53,6 +53,12 @@ with DAG(
         python_callable = sort_media.write_new_path, 
         dag = dag
         ) 
-
+    
+    media_sort = PythonOperator(
+        task_id = "media_sort", 
+        python_callable = sort_media.media_sort, 
+        dag = dag
+        ) 
+    
 # Порядок выполнения задач
-    write_new_path 
+    write_new_path >> media_sort
