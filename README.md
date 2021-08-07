@@ -1,5 +1,9 @@
+# Репозиторий модуля по распознаванию лиц
+[Репозиторий модуля по распознаванию лиц](https://github.com/timesler/facenet-pytorch)<br>
+![картинка](https://raw.githubusercontent.com/timesler/facenet-pytorch/master/data/facenet-pytorch-banner.png)
+
 # Распознавание лица искомого человека на медиафале и перемещение медиафайла
-![face_detection.png](./description/face_detection.png)
+![face_detection.png](./notebook/face_detection.png)
 
 # DDL 
 ```
