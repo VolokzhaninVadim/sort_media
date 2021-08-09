@@ -47,13 +47,14 @@ with DAG(
     ,schedule_interval = "@hourly"
     ,tags=['sort_media']) as dag:
 
-# Получаем баланс Альфа-Банк
+# Получаем новые пути
     write_new_path = PythonOperator(
         task_id = "write_new_path", 
         python_callable = sort_media.write_new_path, 
         dag = dag
         ) 
-    
+
+# Сортируем папки
     media_sort = PythonOperator(
         task_id = "media_sort", 
         python_callable = sort_media.media_sort, 
